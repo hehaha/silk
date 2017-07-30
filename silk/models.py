@@ -20,8 +20,9 @@ from django.utils.safestring import mark_safe
 from silk.utils.profile_parser import parse_profile
 from silk.config import SilkyConfig
 
+# for performance reason, don't use atomic decorator
 # Django 1.8 removes commit_on_success, django 1.5 does not have atomic
-atomic = getattr(transaction, 'atomic', None) or getattr(transaction, 'commit_on_success')
+# atomic = getattr(transaction, 'atomic', None) or getattr(transaction, 'commit_on_success')
 
 
 # Seperated out so can use in tests w/o models
@@ -204,23 +205,12 @@ class SQLQueryManager(models.Manager):
     def bulk_create(self, *args, **kwargs):
         """ensure that num_sql_queries remains consistent. Bulk create does not call
         the model save() method and hence we must add this logic here too"""
-        if len(args):
-            objs = args[0]
-        else:
-            objs = kwargs.get('objs')
-
-        with atomic():
-            request_counter = Counter([x.request_id for x in objs])
-            requests = Request.objects.filter(pk__in=request_counter.keys())
-            # TODO: Not that there is ever more than one request (but there could be eventually)
-            # but perhaps there is a cleaner way of apply the increment from the counter without iterating
-            # and saving individually? e.g. bulk update but with diff. increments. Couldn't come up with this
-            # off hand.
-            for r in requests:
-                r.num_sql_queries = F('num_sql_queries') + request_counter[r.pk]
-                r.save()
-            save = super(SQLQueryManager, self).bulk_create(*args, **kwargs)
-            return save
+        for obj in args[0]:
+            if obj.end_time and obj.start_time:
+                interval = obj.end_time - obj.start_time
+                obj.time_taken = interval.total_seconds() * 1000
+        save = super(SQLQueryManager, self).bulk_create(*args, **kwargs)
+        return save
 
 
 class SQLQuery(models.Model):
@@ -263,7 +253,11 @@ class SQLQuery(models.Model):
         for idx, component in enumerate(components):
             # TODO: If django uses aliases on column names they will be falsely
             # identified as tables...
-            if component.lower() == 'from' or component.lower() == 'join' or component.lower() == 'as':
+            if (component.lower() == 'from' or
+                component.lower() == 'join' or
+                component.lower() == 'as' or
+                component.lower() == 'into' or
+                component.lower() == 'update'):
                 try:
                     _next = components[idx + 1]
                     if not _next.startswith('('):  # Subquery
@@ -275,21 +269,12 @@ class SQLQuery(models.Model):
                     pass
         return tables
 
-    @atomic()
     def save(self, *args, **kwargs):
-
         if self.end_time and self.start_time:
             interval = self.end_time - self.start_time
             self.time_taken = interval.total_seconds() * 1000
-
-        if not self.pk:
-            if self.request:
-                self.request.num_sql_queries += 1
-                self.request.save(update_fields=['num_sql_queries'])
-
         super(SQLQuery, self).save(*args, **kwargs)
 
-    @atomic()
     def delete(self, *args, **kwargs):
         self.request.num_sql_queries -= 1
         self.request.save()

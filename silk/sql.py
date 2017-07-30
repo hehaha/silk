@@ -53,3 +53,27 @@ def execute_sql(self, *args, **kwargs):
             else:
                 DataCollector().register_silk_query(query_dict)
     return self._execute_sql(*args, **kwargs)
+
+
+def execute_insertsql(self, *args, **kwargs):
+    sql_queries = [q % params for q, params in self.as_sql()]
+    if all([_should_wrap(query) for query in sql_queries]):
+        tb = ''.join(reversed(traceback.format_stack()))
+        start = timezone.now()
+        query_dict_list = [
+            {"query": query, "start_time": start, 'traceback': tb} for query in sql_queries]
+        try:
+            return self._execute_sql(*args, **kwargs)
+        finally:
+            end = timezone.now()
+            collector = DataCollector()
+            request = collector.request
+            for query_dict in query_dict_list:
+                query_dict['end_time'] = end
+                if request:
+                    query_dict['request'] = request
+                if self.query.model.__module__ != 'silk.models':
+                    collector.register_query(query_dict)
+                else:
+                    collector.register_silk_query(query_dict)
+    return self._execute_sql(*args, **kwargs)

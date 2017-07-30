@@ -4,7 +4,7 @@ import random
 from django.core.urlresolvers import reverse, NoReverseMatch
 from django.db import transaction, DatabaseError
 
-from django.db.models.sql.compiler import SQLCompiler
+from django.db.models.sql.compiler import SQLCompiler, SQLInsertCompiler
 from django.utils import timezone
 
 from silk.collector import DataCollector
@@ -13,7 +13,7 @@ from silk.config import SilkyConfig
 from silk.model_factory import RequestModelFactory, ResponseModelFactory
 from silk.profiling import dynamic
 from silk.profiling.profiler import silk_meta_profiler
-from silk.sql import execute_sql
+from silk.sql import execute_sql, execute_insertsql
 
 try:
     from django.utils.deprecation import MiddlewareMixin
@@ -100,6 +100,9 @@ class SilkyMiddleware(MiddlewareMixin):
         if not hasattr(SQLCompiler, '_execute_sql'):
             SQLCompiler._execute_sql = SQLCompiler.execute_sql
             SQLCompiler.execute_sql = execute_sql
+            # cause SQLInsertCompiler doesn't call super when invoke execute_sql
+            SQLInsertCompiler._execute_sql = SQLInsertCompiler.execute_sql
+            SQLInsertCompiler.execute_sql = execute_insertsql
         request_model = RequestModelFactory(request).construct_request_model()
         DataCollector().configure(request_model)
 
@@ -112,7 +115,8 @@ class SilkyMiddleware(MiddlewareMixin):
             silk_request = collector.request
             if silk_request:
                 silk_response = ResponseModelFactory(response).construct_response_model()
-                silk_response.save()
+                # if pk is set, django will update then insert
+                silk_response.save(force_insert=True)
                 silk_request.end_time = timezone.now()
                 collector.finalise()
             else:
@@ -125,7 +129,8 @@ class SilkyMiddleware(MiddlewareMixin):
         # Otherwise the  meta time collected in the context manager
         # is not taken in account
         if silk_request:
-            silk_request.save()
+            # if pk is set, django will update then insert
+            silk_request.save(force_insert=True)
         Logger.debug('Process response done.')
 
     def process_response(self, request, response):

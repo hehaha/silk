@@ -133,9 +133,10 @@ class DataCollector(with_metaclass(Singleton, object)):
         if SilkyConfig().SILKY_META:
             num_queries = len(self.silk_queries)
             query_time = sum(_time_taken(x['start_time'], x['end_time']) for _, x in self.silk_queries.items())
-            self.request.meta_num_queries = num_queries
+            # request will save after finalise
+            self.request.meta_num_queries = num_queries + 1
+            # meta_time_spent_queries is exclude request save time
             self.request.meta_time_spent_queries = query_time
-            self.request.save()
 
     def stop_python_profiler(self):
         if getattr(self.local, 'pythonprofiler', None):
@@ -156,11 +157,15 @@ class DataCollector(with_metaclass(Singleton, object)):
                 with open(self.request.prof_file.storage.path(file_name), 'w+b') as f:
                     ps.dump_stats(f.name)
                 self.request.prof_file = f.name
-                self.request.save()
 
+        sql_objs = []
         for _, query in self.queries.items():
-            query_model = models.SQLQuery.objects.create(**query)
+            query_model = models.SQLQuery(**query)
+            sql_objs.append(query_model)
             query['model'] = query_model
+        self.request.num_sql_queries += len(self.queries)
+        models.SQLQuery.objects.bulk_create(sql_objs)
+
         for _, profile in self.profiles.items():
             profile_query_models = []
             if TYP_QUERIES in profile:

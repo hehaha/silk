@@ -191,7 +191,9 @@ class RequestModelFactory(object):
         path = self.request.path
         view_name = self.view_name()
 
-        request_model = models.Request.objects.create(
+        # request_model = models.Request.objects.create(
+        # for performance reason, only create in memory, manually handle save
+        request_model = models.Request(
             path=path,
             encoded_headers=self.encoded_headers(),
             method=self.request.method,
@@ -271,7 +273,9 @@ class ResponseModelFactory(object):
                 header, val = k, v
             finally:
                 headers[header] = val
-        silky_response = models.Response.objects.create(
+        # silky_response = models.Response.objects.create(
+        # for performance reason, only create in memory, manually handle save
+        silky_response = models.Response(
             request_id=self.request.id,
             status_code=self.response.status_code,
             encoded_headers=json.dumps(headers),
